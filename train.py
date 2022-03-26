@@ -1,4 +1,4 @@
-import pytorch
+import torch
 import numpy as np
 import os
 def format_data(source_filename, target_filename):
