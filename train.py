@@ -97,6 +97,7 @@ def load_dataset(datafiles):
                 # 迭代返回文本和标注
                 yield words, labels
 
+
     # 根据datafiles的数据类型，选择合适的处理方式
     if isinstance(datafiles, str):  # 字符串，单个文件名称
         # 返回单个文件对应的单个数据集
