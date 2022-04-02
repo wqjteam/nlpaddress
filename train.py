@@ -1,3 +1,12 @@
+import numpy as np
+import random
+import torch
+import matplotlib.pylab as plt
+from torch.nn.utils import clip_grad_norm_
+from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
+from transformers import BertTokenizer, BertForSequenceClassification, AdamW
+from transformers import get_linear_schedule_with_warmup
+
 # 数据格式调整，将原先每行是每个字的标注形式，修改为每行是每句话的标注形式，相邻字（标注）之间，采用符号'\002'进行分隔
 def format_data(source_filename, target_filename):
     datalist = []
@@ -78,7 +87,8 @@ def gernate_dic(source_filename1, source_filename2, target_filename):
     with open(target_filename, 'w', encoding='utf-8') as f:
         # 将标签类型列表写入文件target_filename
         lines = f.writelines(data_list)
-
+def MapDataset(listofdata):
+    return [listofdata[0],listofdata[1]]
 
 #加载自定义数据集
 # 加载数据文件datafiles
@@ -101,10 +111,11 @@ def load_dataset(datafiles):
     # 根据datafiles的数据类型，选择合适的处理方式
     if isinstance(datafiles, str):  # 字符串，单个文件名称
         # 返回单个文件对应的单个数据集
-        return dict(list(read(datafiles)))
+        # return MapDataset(list(read(datafiles)))
+        return list(read(datafiles))
     elif isinstance(datafiles, list) or isinstance(datafiles, tuple):  # 列表或元组，多个文件名称
         # 返回多个文件对应的多个数据集
-        return [dict(list(read(datafile))) for datafile in datafiles]
+        return [list(read(datafile)) for datafile in datafiles]
 
 
 # 加载字典文件，文件由单列构成，需要设置value
@@ -140,3 +151,43 @@ print(len(train_ds),len(dev_ds))
 print(train_ds[0])
 print(dev_ds[0])
 print(label_vocab)
+
+
+
+#数据预处理
+#tokenizer：预编码器，label_vocab：标签类型KV表，K是标签类型，V是编码
+def convert_example(example,tokenizer,label_vocab,max_seq_length=256,is_test=False):
+    #测试集没有标签
+    if is_test:
+        text = example
+    else:#训练集和验证集包含标签
+        text, label = example
+    #tokenizer.encode方法能够完成切分token，映射token ID以及拼接特殊token
+    encoded_inputs = tokenizer.encode(text=text, max_seq_len=None, pad_to_max_seq_len=False, return_length=True)
+    #pdb.set_trace()
+    #获取字符编码（'input_ids'）、类型编码（'token_type_ids'）、字符串长度（'seq_len'）
+    input_ids = encoded_inputs["input_ids"]
+    segment_ids = encoded_inputs["token_type_ids"]
+    seq_len = encoded_inputs["seq_len"]
+
+    if not is_test:#训练集和验证集
+        #[CLS]和[SEP]对应的标签均是['O']，添加到标签序列中
+        label = ['O'] + label + ['O']
+        #生成由标签编码构成的序列
+        label = [label_vocab[x] for x in label]
+        return input_ids, segment_ids, seq_len, label
+    else:#测试集，不返回标签序列
+        return input_ids, segment_ids, seq_len
+
+
+#加载Bert预训练模型，将原始输入文本转化成序列标注模型model可接受的输入数据格式。
+tokenizer = ppnlp.transformers.BertTokenizer.from_pretrained("bert-base-chinese")
+#functools.partial()的功能：预先设置参数，减少使用时设置的参数个数
+#使用partial()来固定convert_example函数的tokenizer, label_vocab, max_seq_length等参数值
+trans_func = partial(convert_example, tokenizer=tokenizer, label_vocab=label_vocab, max_seq_length=128)
+
+
+#对训练集和测试集进行编码
+train_ds.map(trans_func)
+dev_ds.map(trans_func)
+print ([train_ds[0]])
