@@ -4,8 +4,8 @@ import torch
 import matplotlib.pylab as plt
 from torch.nn.utils import clip_grad_norm_
 from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
-from transformers import BertTokenizer, BertForSequenceClassification, AdamW
-from transformers import get_linear_schedule_with_warmup
+from transformers import BertTokenizer, BertConfig, BertForMaskedLM, BertForNextSentencePrediction
+from transformers import BertModel
 
 # 数据格式调整，将原先每行是每个字的标注形式，修改为每行是每句话的标注形式，相邻字（标注）之间，采用符号'\002'进行分隔
 def format_data(source_filename, target_filename):
@@ -180,13 +180,10 @@ def convert_example(example,tokenizer,label_vocab,max_seq_length=256,is_test=Fal
         return input_ids, segment_ids, seq_len
 
 
-#加载Bert预训练模型，将原始输入文本转化成序列标注模型model可接受的输入数据格式。
-tokenizer = ppnlp.transformers.BertTokenizer.from_pretrained("bert-base-chinese")
-#functools.partial()的功能：预先设置参数，减少使用时设置的参数个数
-#使用partial()来固定convert_example函数的tokenizer, label_vocab, max_seq_length等参数值
-trans_func = partial(convert_example, tokenizer=tokenizer, label_vocab=label_vocab, max_seq_length=128)
-
-
+# a.通过词典导入分词器
+tokenizer = BertTokenizer.from_pretrained("bert-base-chinese")
+# b. 导入配置文件
+model_config = BertConfig.from_pretrained("bert-base-chinese")
 #对训练集和测试集进行编码
 train_ds.map(trans_func)
 dev_ds.map(trans_func)
