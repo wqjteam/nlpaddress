@@ -6,7 +6,8 @@ from torch.nn.utils import clip_grad_norm_
 from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
 from transformers import BertTokenizer, BertConfig, BertForMaskedLM, BertForNextSentencePrediction
 from transformers import BertModel
-
+from functools import partial  #partial()函数可以用来固定某些参数值，并返回一个新的callable对象
+import pdb
 # 数据格式调整，将原先每行是每个字的标注形式，修改为每行是每句话的标注形式，相邻字（标注）之间，采用符号'\002'进行分隔
 def format_data(source_filename, target_filename):
     datalist = []
@@ -146,11 +147,11 @@ train_ds, dev_ds = load_dataset(datafiles=(
 #加载标签文件，并转换为KV表，K为标签，V为编号（从0开始递增）
 label_vocab = load_dict_single('./dataset/mytag.dic')
 
-print("训练集、验证集、测试集的数量：")
-print(len(train_ds),len(dev_ds))
-print(train_ds[0])
-print(dev_ds[0])
-print(label_vocab)
+# print("训练集、验证集、测试集的数量：")
+# print(len(train_ds),len(dev_ds))
+# print(train_ds[0])
+# print(dev_ds[0])
+# print(label_vocab)
 
 
 
@@ -163,12 +164,14 @@ def convert_example(example,tokenizer,label_vocab,max_seq_length=256,is_test=Fal
     else:#训练集和验证集包含标签
         text, label = example
     #tokenizer.encode方法能够完成切分token，映射token ID以及拼接特殊token
-    encoded_inputs = tokenizer.encode(text=text, max_seq_len=None, pad_to_max_seq_len=False, return_length=True)
+    #encode仅返回input_ids
+    #encode_plus返回所有编码信息 input_ids’：是单词在词典中的编码 token_type_ids’：区分两个句子的编码（上句全为0，下句全为1） ‘attention_mask’：指定对哪些词进行self-Attention操作
+    encoded_inputs = tokenizer.encode_plus(text=text, max_seq_len=None, pad_to_max_seq_len=False, return_length=True)
     #pdb.set_trace()
     #获取字符编码（'input_ids'）、类型编码（'token_type_ids'）、字符串长度（'seq_len'）
     input_ids = encoded_inputs["input_ids"]
     segment_ids = encoded_inputs["token_type_ids"]
-    seq_len = encoded_inputs["seq_len"]
+    seq_len = len(input_ids)-2
 
     if not is_test:#训练集和验证集
         #[CLS]和[SEP]对应的标签均是['O']，添加到标签序列中
@@ -185,6 +188,26 @@ tokenizer = BertTokenizer.from_pretrained("bert-base-chinese")
 # b. 导入配置文件
 model_config = BertConfig.from_pretrained("bert-base-chinese")
 #对训练集和测试集进行编码
-train_ds.map(trans_func)
-dev_ds.map(trans_func)
+MODEL_PATH = './dataset/model/bert-base-chinese/'
+
+#functools.partial()的功能：预先设置参数，减少使用时设置的参数个数
+#使用partial()来固定convert_example函数的tokenizer, label_vocab, max_seq_length等参数值
+trans_func = partial(convert_example, tokenizer=tokenizer, label_vocab=label_vocab, max_seq_length=128)
+
+
+# 修改配置
+model_config.output_hidden_states = True
+model_config.output_attentions = True
+# 通过配置和路径导入模型
+bert_model = BertModel.from_pretrained(MODEL_PATH, config = model_config)
+
+print(tokenizer.encode('我不喜欢你的猫'))
+#对训练集和测试集进行编码
+for train in train_ds:
+    print(trans_func(train))
+# train_ds.map(trans_func)
+
+
+for dev in dev_ds:
+    print(trans_func(dev))
 print ([train_ds[0]])
