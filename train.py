@@ -14,7 +14,7 @@ from functools import partial  # partial()函数可以用来固定某些参数�
 import pdb
 
 
-# 数据格式调整，将原先每行是每个字的标注形式，修改为每行是每句话的标注形式，相邻字（标注）之间，采用符号'\002'进行分隔
+# 1.数据格式调整，将原先每行是每个字的标注形式，修改为每行是每句话的标注形式，相邻字（标注）之间，采用符号'\002'进行分隔
 def format_data(source_filename, target_filename):
     datalist = []
     # 读取source_filename所有数据到lines中，每个元素是字标注
@@ -56,7 +56,7 @@ def format_data(source_filename, target_filename):
     print(f'{source_filename}文件格式转换完毕，保存为{target_filename}')
 
 
-# 构建Label标签表
+# 2.构建Label标签表
 # 提取文件source_filename1和source_filename2的标签类型，保存到target_filename
 def gernate_dic(source_filename1, source_filename2, target_filename):
     # 标签类型列表初始化为空
@@ -99,7 +99,7 @@ def MapDataset(listofdata):
     return [listofdata[0], listofdata[1]]
 
 
-# 加载自定义数据集
+# 3.加载自定义数据集
 # 加载数据文件datafiles
 def load_dataset(datafiles):
     # 读取数据文件data_path
@@ -149,7 +149,7 @@ def load_dict_single(dict_path):
 # 根据训练集和验证集生成dic，保存所有的标签
 # gernate_dic('dataset/train.conll', 'dataset/dev.conll', 'dataset/mytag.dic')
 
-# 加载Bert模型需要的输入数据
+# 4.加载Bert模型需要的输入数据
 train_ds, dev_ds = load_dataset(datafiles=(
     './dataset/train.txt', './dataset/dev.txt'))
 # 加载标签文件，并转换为KV表，K为标签，V为编号（从0开始递增）
@@ -163,7 +163,7 @@ label_vocab = load_dict_single('./dataset/mytag.dic')
 # print(label_vocab)
 
 
-# 数据预处理
+# 5.数据预处理
 # tokenizer：预编码器，label_vocab：标签类型KV表，K是标签类型，V是编码
 def convert_example(example, tokenizer, label_vocab, max_seq_length=256, is_test=False):
     # 测试集没有标签
@@ -248,7 +248,7 @@ def create_mini_batch(samples):
 trainloader = DataLoader(train_ds, batch_size=64, collate_fn=create_mini_batch, drop_last=False)
 devloader = DataLoader(dev_ds, batch_size=64, collate_fn=create_mini_batch, drop_last=False)
 
-# Bert模型加载和训练
+#6.Bert模型加载和训练
 
 
 from transformers import BertForTokenClassification
@@ -329,3 +329,182 @@ for epoch in range(5):
 # !mkdir bert_result
 model.save_pretrained('./bert_result')
 tokenizer.save_pretrained('./bert_result')
+
+
+#7.模型加载与处理数据
+# 加载测试数据
+def load_testdata(datafiles):
+    def read(data_path):
+        with open(data_path, 'r', encoding='utf-8') as fp:
+            # next(fp)  # 没有header，不用Skip header
+            for line in fp.readlines():
+                ids, words = line.strip('\n').split('\001')
+                # 要预测的数据集没有label，伪造个O，不知道可以不 ，应该后面预测不会用label
+                labels = ['O' for x in range(0, len(words))]
+                words_array = []
+                for c in words:
+                    words_array.append(c)
+                yield words_array, labels
+
+    # 根据datafiles的数据类型，选择合适的处理方式
+    if isinstance(datafiles, str):  # 字符串，单个文件名称
+        # 返回单个文件对应的单个数据集
+        return MapDataset(list(read(datafiles)))
+    elif isinstance(datafiles, list) or isinstance(datafiles, tuple):  # 列表或元组，多个文件名称、
+        # 返回多个文件对应的多个数据集
+        return [MapDataset(list(read(datafile))) for datafile in datafiles]
+
+
+
+#加载测试文件
+test_ds = load_testdata(datafiles=('./dataset/final_test.txt'))
+for i in range(10):
+    print(test_ds[i])
+#预处理编码
+test_ds.map(trans_func)
+print (test_ds[0])
+
+
+#使用paddle.io.DataLoader接口多线程异步加载数据。
+ignore_label = 1
+#创建Tuple对象，将多个批处理函数的处理结果连接在一起
+#因为数据集train_ds、dev_ds的每条数据包含4部分，所以Tuple对象中包含4个批处理函数，分别对应Token ID、Token Type、Len、Label
+batchify_fn = lambda samples, fn=torch.Tuple(
+    pad_sequence(axis=0, pad_val=tokenizer.pad_token_id),  # input_ids
+    pad_sequence(axis=0, pad_val=tokenizer.pad_token_type_id),  # token_type_ids
+    torch.stack(),  # seq_len
+    pad_sequence(axis=0, pad_val=ignore_label)  # labels
+): fn(samples)
+#paddle.io.DataLoader加载给定数据集，返回迭代器，每次迭代访问batch_size条数据
+#使用collate_fn定义所读取数据的格式
+test_loader = DataLoader(
+    dataset=test_ds,
+    batch_size=50,
+    return_list=True,
+    collate_fn=batchify_fn)
+
+
+
+#8、Bert模型推理
+# 将标签编码转换为标签名称，组合成预测结果
+# ds：Bert模型生成的编码序列列表，decodes：待转换的标签编码列表，lens：句子有效长度列表，label_vocab：标签类型KV表
+def wgm_trans_decodes(ds, decodes, lens, label_vocab):
+    # 将decodes和lens由列表转换为数组
+    decodes = [x for batch in decodes for x in batch]
+    lens = [x for batch in lens for x in batch]
+    # 先使用zip形成元祖（编号, 标签），然后使用dict形成字典
+    id_label = dict(zip(label_vocab.values(), label_vocab.keys()))
+    # 保存所有句子解析结果的列表
+    results = []
+    # 初始化编号
+    inNum = 1;
+    # 逐个处理待转换的标签编码列表
+    for idx, end in enumerate(lens):
+        # 句子单字构成的数组
+        sent_array = ds.data[idx][0][:end]
+        # 句子单字标签构成的数组
+        tags_array = [id_label[x] for x in decodes[idx][1:end]]
+        # 初始化句子和解析结果
+        sent = "";
+        tags = "";
+        # 将字符串数组转换为单个字符串
+        for i in range(end - 2):
+            # pdb.set_trace()
+            # 单字直接连接，形成句子
+            sent = sent + sent_array[i]
+            # 标签以空格连接
+            if i > 0:
+                tags = tags + " " + tags_array[i]
+            else:  # 第1个标签
+                tags = tags_array[i]
+        # 构成结果串：编号+句子+标签序列，中间用“\u0001”连接
+        current_pred = str(inNum) + '\u0001' + sent + '\u0001' + tags + "\n"
+        # pdb.set_trace()
+        # 添加到句子解析结果的列表
+        results.append(current_pred)
+        inNum = inNum + 1
+    return results
+
+
+# 从标签编码中提取出地址元素
+# ds：ERNIE模型生成的编码序列列表，decodes：待转换的标签编码列表，lens：句子有效长度列表，label_vocab：标签类型KV表
+def wgm_parse_decodes(ds, decodes, lens, label_vocab):
+    # 将decodes和lens由列表转换为数组
+    decodes = [x for batch in decodes for x in batch]
+    lens = [x for batch in lens for x in batch]
+    # 先使用zip形成元祖（编号, 标签），然后使用dict形成字典
+    id_label = dict(zip(label_vocab.values(), label_vocab.keys()))
+
+    # 地址元素提取结果，每行是单个句子的地址元素列表
+    # 例如：('朝阳区', 'district') ('小关北里', 'poi') ('000-0号', 'houseno')
+    outputs = []
+    for idx, end in enumerate(lens):
+        # 句子单字构成的数组
+        sent = ds.data[idx][0][:end]
+        # 句子单字标签构成的数组
+        tags = [id_label[x] for x in decodes[idx][1:end]]
+        # 初始化地址元素名称和标签列表
+        sent_out = []
+        tags_out = []
+        # 当前解析出来的地址元素名称
+        words = ""
+        # pdb.set_trace()
+        # 逐个处理（单字, 标签）
+        # 提取原理：如果当前标签是O，或者以B开头，那么说明遇到新的地址元素，需要存储已经解析出来的地址元素名称words
+        # 然后，根据情况进行处理
+        for s, t in zip(sent, tags):
+            if t.startswith('B-') or t == 'O':  # 遇到新的地址元素
+                if len(words):  # words非空，需要存储到sent_out
+                    sent_out.append(words)
+                if t == 'O':  # 标签为O，则直接存储标签
+                    # pdb.set_trace()
+                    tags_out.append(t)
+                else:  # 提取出标签
+                    tags_out.append(t.split('-')[1])
+                # 新地址元素名称首字符
+                words = s
+            else:  # 完善地址元素名称
+                words += s
+        # 处理地址串第1个地址元素时，sent_out长度为0，和tags_out的长度不同，需要补齐
+        if len(sent_out) < len(tags_out):
+            sent_out.append(words)
+        # 按照（名称,标签）的形式组织地址元素，并且用空格分隔开
+        outputs.append(' '.join(
+            [str((s, t)) for s, t in zip(sent_out, tags_out)]))
+        # 换行符号
+        outputs.append('\n')
+    return outputs
+
+
+# 使用Bert模型推理，并保存预测结果
+# data_loader：
+def wgm_predict_save(model, data_loader, ds, label_vocab, tagged_filename, element_filename):
+    pred_list = []
+    len_list = []
+    for input_ids, seg_ids, lens, labels in data_loader:
+        # pdb.set_trace()
+        logits = model(input_ids, seg_ids)
+        pred = torch.argmax(logits, axis=-1)
+        # print(pred)
+        pred_list.append(pred.numpy())
+        len_list.append(lens.numpy())
+    # 将标签编码转换为标签名称，组合成预测结果
+    predlist = wgm_trans_decodes(ds, pred_list, len_list, label_vocab)
+    # 从标签编码中提取出地址元素
+    elemlist = wgm_parse_decodes(ds, pred_list, len_list, label_vocab)
+    # 保存预测结果
+    with open(tagged_filename, 'w', encoding='utf-8') as f:
+        f.writelines(predlist)
+    # 保存地址元素
+    with open(element_filename, 'w', encoding='utf-8') as f:
+        f.writelines(elemlist)
+
+
+
+#加载Bert模型
+model = BertForTokenClassification.from_pretrained("bert-base-chinese", num_classes=len(label_vocab))
+model_dict = torch.load('bert_result/model_state.pdparams')
+model.set_dict(model_dict)
+
+#推理并预测结果
+wgm_predict_save(model, test_loader, test_ds, label_vocab, "predict_wgm.txt", "element_wgm.txt")
