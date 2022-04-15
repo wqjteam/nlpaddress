@@ -2,12 +2,18 @@ import numpy as np
 import random
 import torch
 import matplotlib.pylab as plt
-from torch.nn.utils import clip_grad_norm_
-from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
-from transformers import BertTokenizer, BertConfig, BertForMaskedLM, BertForNextSentencePrediction
+from sklearn.metrics import classification_report
+import torch.nn.functional as F
+import torch.nn as nn
+from transformers import BertTokenizer, BertConfig, BertForMaskedLM, BertForNextSentencePrediction, \
+    BertForQuestionAnswering
 from transformers import BertModel
-from functools import partial  #partial()函数可以用来固定某些参数值，并返回一个新的callable对象
+from torch.utils.data import DataLoader, Dataset
+from torch.nn.utils.rnn import pad_sequence
+from functools import partial  # partial()函数可以用来固定某些参数值，并返回一个新的callable对象
 import pdb
+
+
 # 数据格式调整，将原先每行是每个字的标注形式，修改为每行是每句话的标注形式，相邻字（标注）之间，采用符号'\002'进行分隔
 def format_data(source_filename, target_filename):
     datalist = []
@@ -44,14 +50,13 @@ def format_data(source_filename, target_filename):
             labels = labels + label
             flag = 1  # 修改标志
     with open(target_filename, 'w', encoding='utf-8') as f:
-        #pdb.set_trace()
-        #将转换结果写入文件target_filename
-        lines=f.writelines(datalist)
+        # pdb.set_trace()
+        # 将转换结果写入文件target_filename
+        lines = f.writelines(datalist)
     print(f'{source_filename}文件格式转换完毕，保存为{target_filename}')
 
 
-
-#构建Label标签表
+# 构建Label标签表
 # 提取文件source_filename1和source_filename2的标签类型，保存到target_filename
 def gernate_dic(source_filename1, source_filename2, target_filename):
     # 标签类型列表初始化为空
@@ -88,10 +93,13 @@ def gernate_dic(source_filename1, source_filename2, target_filename):
     with open(target_filename, 'w', encoding='utf-8') as f:
         # 将标签类型列表写入文件target_filename
         lines = f.writelines(data_list)
-def MapDataset(listofdata):
-    return [listofdata[0],listofdata[1]]
 
-#加载自定义数据集
+
+def MapDataset(listofdata):
+    return [listofdata[0], listofdata[1]]
+
+
+# 加载自定义数据集
 # 加载数据文件datafiles
 def load_dataset(datafiles):
     # 读取数据文件data_path
@@ -107,7 +115,6 @@ def load_dataset(datafiles):
                 labels = labels.split('\002')
                 # 迭代返回文本和标注
                 yield words, labels
-
 
     # 根据datafiles的数据类型，选择合适的处理方式
     if isinstance(datafiles, str):  # 字符串，单个文件名称
@@ -134,7 +141,8 @@ def load_dict_single(dict_path):
         i += 1
     return vocab
 
-#逐个转换文件
+
+# 逐个转换文件
 # format_data('./dataset/dev.conll', './dataset/dev.txt')
 # format_data(r'./dataset/train.conll', r'./dataset/train.txt')
 
@@ -143,9 +151,10 @@ def load_dict_single(dict_path):
 
 # 加载Bert模型需要的输入数据
 train_ds, dev_ds = load_dataset(datafiles=(
-        './dataset/train.txt', './dataset/dev.txt'))
-#加载标签文件，并转换为KV表，K为标签，V为编号（从0开始递增）
+    './dataset/train.txt', './dataset/dev.txt'))
+# 加载标签文件，并转换为KV表，K为标签，V为编号（从0开始递增）
 label_vocab = load_dict_single('./dataset/mytag.dic')
+
 
 # print("训练集、验证集、测试集的数量：")
 # print(len(train_ds),len(dev_ds))
@@ -154,32 +163,31 @@ label_vocab = load_dict_single('./dataset/mytag.dic')
 # print(label_vocab)
 
 
-
-#数据预处理
-#tokenizer：预编码器，label_vocab：标签类型KV表，K是标签类型，V是编码
-def convert_example(example,tokenizer,label_vocab,max_seq_length=256,is_test=False):
-    #测试集没有标签
+# 数据预处理
+# tokenizer：预编码器，label_vocab：标签类型KV表，K是标签类型，V是编码
+def convert_example(example, tokenizer, label_vocab, max_seq_length=256, is_test=False):
+    # 测试集没有标签
     if is_test:
         text = example
-    else:#训练集和验证集包含标签
+    else:  # 训练集和验证集包含标签
         text, label = example
-    #tokenizer.encode方法能够完成切分token，映射token ID以及拼接特殊token
-    #encode仅返回input_ids
-    #encode_plus返回所有编码信息 input_ids’：是单词在词典中的编码 token_type_ids’：区分两个句子的编码（上句全为0，下句全为1） ‘attention_mask’：指定对哪些词进行self-Attention操作
+    # tokenizer.encode方法能够完成切分token，映射token ID以及拼接特殊token
+    # encode仅返回input_ids
+    # encode_plus返回所有编码信息 input_ids’：是单词在词典中的编码 token_type_ids’：区分两个句子的编码（上句全为0，下句全为1） ‘attention_mask’：指定对哪些词进行self-Attention操作
     encoded_inputs = tokenizer.encode_plus(text=text, max_seq_len=None, pad_to_max_seq_len=False, return_length=True)
-    #pdb.set_trace()
-    #获取字符编码（'input_ids'）、类型编码（'token_type_ids'）、字符串长度（'seq_len'）
+    # pdb.set_trace()
+    # 获取字符编码（'input_ids'）、类型编码（'token_type_ids'）、字符串长度（'seq_len'）
     input_ids = encoded_inputs["input_ids"]
     segment_ids = encoded_inputs["token_type_ids"]
-    seq_len = len(input_ids)-2
+    seq_len = len(input_ids) - 2
 
-    if not is_test:#训练集和验证集
-        #[CLS]和[SEP]对应的标签均是['O']，添加到标签序列中
+    if not is_test:  # 训练集和验证集
+        # [CLS]和[SEP]对应的标签均是['O']，添加到标签序列中
         label = ['O'] + label + ['O']
-        #生成由标签编码构成的序列
+        # 生成由标签编码构成的序列
         label = [label_vocab[x] for x in label]
         return input_ids, segment_ids, seq_len, label
-    else:#测试集，不返回标签序列
+    else:  # 测试集，不返回标签序列
         return input_ids, segment_ids, seq_len
 
 
@@ -187,27 +195,137 @@ def convert_example(example,tokenizer,label_vocab,max_seq_length=256,is_test=Fal
 tokenizer = BertTokenizer.from_pretrained("bert-base-chinese")
 # b. 导入配置文件
 model_config = BertConfig.from_pretrained("bert-base-chinese")
-#对训练集和测试集进行编码
+# 对训练集和测试集进行编码
 MODEL_PATH = './dataset/model/bert-base-chinese/'
 
-#functools.partial()的功能：预先设置参数，减少使用时设置的参数个数
-#使用partial()来固定convert_example函数的tokenizer, label_vocab, max_seq_length等参数值
+# functools.partial()的功能：预先设置参数，减少使用时设置的参数个数
+# 使用partial()来固定convert_example函数的tokenizer, label_vocab, max_seq_length等参数值
 trans_func = partial(convert_example, tokenizer=tokenizer, label_vocab=label_vocab, max_seq_length=128)
-
 
 # 修改配置
 model_config.output_hidden_states = True
 model_config.output_attentions = True
 # 通过配置和路径导入模型
-bert_model = BertModel.from_pretrained(MODEL_PATH, config = model_config)
+bert_model = BertModel.from_pretrained(MODEL_PATH, config=model_config)
 
-print(tokenizer.encode('我不喜欢你的猫'))
-#对训练集和测试集进行编码
-for train in train_ds:
-    print(trans_func(train))
-# train_ds.map(trans_func)
+# 对训练集和测试集进行编码
+# print(train_ds[0])
+for index, train in enumerate(train_ds):
+    train_ds[index] = trans_func(train)
+for index, dev in enumerate(dev_ds):
+    dev_ds[index] = trans_func(dev)
 
 
-for dev in dev_ds:
-    print(trans_func(dev))
-print ([train_ds[0]])
+# 输出转换后的向量
+# 向量转单词
+
+# print(train_ds[0])
+# print(tokenizer.convert_ids_to_tokens(train_ds[0][0]))
+
+
+def create_mini_batch(samples):
+    tokens_tensors = [torch.tensor(s[0]) for s in train_ds]
+    label_tensors = [torch.tensor(s[3]) for s in train_ds]
+
+    # pad_sequence传入的数据必须的tensor
+    # zero pad 到同一序列长度
+    one = [0]
+    tokens_tensors = pad_sequence(tokens_tensors, batch_first=True)
+    label_tensors = pad_sequence(label_tensors, batch_first=True, padding_value=0)
+
+    if len(tokens_tensors[0]) != 50:
+        tokens_tensors = torch.tensor([t + one for t in tokens_tensors.numpy().tolist()])
+    if len(label_tensors[0]) != 50:
+        label_tensors = torch.tensor([t + one for t in label_tensors.numpy().tolist()])
+    # attention masks，将 tokens_tensors 不为 zero padding 的位置设为1
+    masks_tensors = torch.zeros(tokens_tensors.shape, dtype=torch.long)
+    masks_tensors = masks_tensors.masked_fill(tokens_tensors != 0, 1)
+
+    return tokens_tensors, masks_tensors, label_tensors
+
+
+# create_mini_batch(train_ds)
+trainloader = DataLoader(train_ds, batch_size=64, collate_fn=create_mini_batch, drop_last=False)
+devloader = DataLoader(dev_ds, batch_size=64, collate_fn=create_mini_batch, drop_last=False)
+
+# Bert模型加载和训练
+
+
+from transformers import BertForTokenClassification
+
+model = BertForTokenClassification.from_pretrained("bert-base-chinese", num_labels=len(label_vocab))
+
+# model.cuda()
+# 设置Fine-Tune优化策略
+# 计算了块检测的精确率、召回率和F1-score。常用于序列标记任务，如命名实体识别
+# metric = ChunkEvaluator(label_list=label_vocab.keys(), suffix=True)
+metric = torch.chunk(torch.tensor(np.zeros(4)), chunks=2)
+# 交叉熵损失函数
+criterion = nn.CrossEntropyLoss(ignore_index=-1)
+# 在Adam的基础上加入了权重衰减的优化器，可以解决L2正则化失效问题
+optimizer = torch.optim.Adam(lr=2e-5, params=model.parameters())
+
+
+# 评估函数
+def evaluate(model, metric, data_loader):
+    model.eval()
+    metric.reset()  # 评估器置位
+    # 依次处理每批数据
+    for input_ids, seg_ids, lens, labels in data_loader:
+        # 单字属于不同标签的概率
+        logits = model(input_ids, seg_ids)
+        # 损失函数的平均值
+        loss = torch.mean(criterion(logits, labels))
+        # 按照概率最大原则，计算单字的标签编号
+        # argmax计算logits中最大元素值的索引，从0开始
+        preds = torch.argmax(logits, axis=-1)
+        # 推理块个数，标签个数，正确的标签个数
+        n_infer, n_label, n_correct = metric.compute(None, lens, preds, labels)
+        # 更新评估的参数
+        metric.update(n_infer.numpy(), n_label.numpy(), n_correct.numpy())
+        # 平均化的准确率、召回率、F1值
+        precision, recall, f1_score = metric.accumulate()
+    print("评估准确度: %.6f - 召回率: %.6f - f1得分: %.6f- 损失函数: %.6f" % (precision, recall, f1_score, loss))
+    model.train()
+    metric.reset()
+
+
+# 模型训练
+global_step = 0
+for epoch in range(5):
+    # 依次处理每批数据
+    for step, (input_ids, segment_ids, seq_lens, labels) in enumerate(trainloader, start=1):
+        # 单字属于不同标签的概率
+        logits = model(input_ids, segment_ids)
+        # 按照概率最大原则，计算单字的标签编号
+        preds = torch.argmax(logits, axis=-1)
+        # 推理块个数，标签个数，正确的标签个数
+        n_infer, n_label, n_correct = metric.compute(None, seq_lens, preds, labels)
+        # 更新评估的参数
+        metric.update(n_infer.numpy(), n_label.numpy(), n_correct.numpy())
+        # 平均化的准确率、召回率、F1值
+        precision, recall, f1_score = metric.accumulate()
+        # 损失函数的平均值
+        loss = torch.mean(criterion(logits, labels))
+        # 回传损失函数，计算梯度
+        loss.backward()
+
+        if global_step % 10 == 0:
+            print("训练集的当前epoch:%d - step:%d" % (epoch, step))
+            print("训练准确度: %.6f, 召回率: %.6f, f1得分: %.6f- 损失函数: %.6f" % (precision, recall, f1_score, loss))
+
+        # 根据梯度来更新参数
+        optimizer.step()
+        # 梯度置零
+        optimizer.clear_grad()
+        global_step += 1
+    # 评估训练模型
+    evaluate(model, metric, devloader)
+    torch.save(model.state_dict(),
+               './checkpoint/model_%d.pdparams' % (global_step))
+
+
+#模型存储
+# !mkdir bert_result
+model.save_pretrained('./bert_result')
+tokenizer.save_pretrained('./bert_result')
