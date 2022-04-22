@@ -2,7 +2,7 @@ import numpy as np
 import random
 import torch
 import matplotlib.pylab as plt
-import ignite
+from ignite.metrics import Accuracy, Loss
 import torch.nn as nn
 from transformers import BertTokenizer, BertConfig, BertForMaskedLM, BertForNextSentencePrediction, \
     BertForQuestionAnswering
@@ -12,7 +12,7 @@ from torch.nn.utils.rnn import pad_sequence
 from functools import partial  # partial()函数可以用来固定某些参数值，并返回一个新的callable对象
 import pdb
 
-
+# pip install pytorch-ignite
 # 1.数据格式调整，将原先每行是每个字的标注形式，修改为每行是每句话的标注形式，相邻字（标注）之间，采用符号'\002'进行分隔
 def format_data(source_filename, target_filename):
     datalist = []
