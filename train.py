@@ -2,10 +2,9 @@ import numpy as np
 import random
 import torch
 import matplotlib.pylab as plt
-from ignite.metrics import Accuracy, Loss
+from ignite.metrics import Accuracy, Recall,Precision
 import torch.nn as nn
-from transformers import BertTokenizer, BertConfig, BertForMaskedLM, BertForNextSentencePrediction, \
-    BertForQuestionAnswering
+from transformers import BertTokenizer, BertConfig, BertForMaskedLM, BertForNextSentencePrediction,  BertForQuestionAnswering
 from transformers import BertModel
 from torch.utils.data import DataLoader, Dataset
 from torch.nn.utils.rnn import pad_sequence
@@ -260,7 +259,11 @@ model = BertForTokenClassification.from_pretrained("bert-base-chinese", num_labe
 # 设置Fine-Tune优化策略
 # 计算了块检测的精确率、召回率和F1-score。常用于序列标记任务，如命名实体识别
 # metric = ChunkEvaluator(label_list=label_vocab.keys(), suffix=True)
-metric = torch.chunk(torch.tensor(np.zeros(4)), chunks=2)
+# metric = torch.chunk(torch.tensor(np.zeros(4)), chunks=2)
+# 实例化相关metrics的计算对象
+model_acc = Accuracy()
+model_recall = Recall()
+model_precision = Precision()
 # 交叉熵损失函数
 criterion = nn.CrossEntropyLoss(ignore_index=-1)
 # 在Adam的基础上加入了权重衰减的优化器，可以解决L2正则化失效问题
@@ -292,12 +295,19 @@ def evaluate(model, metric, data_loader):
         # argmax计算logits中最大元素值的索引，从0开始
         preds = torch.argmax(logits[0], axis=-1)
         # 推理块个数，标签个数，正确的标签个数
-        n_infer, n_label, n_correct = metric.compute(None, lens, preds, labels)
+       # n_infer, n_label, n_correct = metric.compute(None, lens, preds, labels)
         # 更新评估的参数
-        metric.update(n_infer.numpy(), n_label.numpy(), n_correct.numpy())
+        #metric.update(n_infer.numpy(), n_label.numpy(), n_correct.numpy())
         # 平均化的准确率、召回率、F1值
-        precision, recall, f1_score = metric.accumulate()
-    print("评估准确度: %.6f - 召回率: %.6f - f1得分: %.6f- 损失函数: %.6f" % (precision, recall, f1_score, loss))
+        #precision, recall, f1_score = metric.accumulate()
+        model_acc.update(preds, labels)
+        model_recall.update(preds, labels)
+        model_precision.update(preds, labels)
+        acc = model_acc.compute()
+        recall = model_recall.compute()
+        precision = model_precision.compute()
+
+    print("评估准确度: %.6f - 召回率: %.6f - f1得分: %.6f- 损失函数: %.6f" % (precision, recall, acc, loss))
     model.train()
     metric.reset()
 
@@ -322,11 +332,19 @@ for epoch in range(5):
         # 平均化的准确率、召回率、F1值
         # precision, recall, f1_score = metric.accumulate()
         performance_index(preds, labels)
-        ignite.Accuracy
+        # 实例化相关metrics的计算对象
+        # 一个batch进行计算迭代
+        model_acc.update(preds, labels)
+        model_recall.update(preds, labels)
+        model_precision.update(preds, labels)
+        acc = model_acc.compute()
+        recall = model_recall.compute()
+        precision = model_precision.compute()
         if global_step % 10 == 0:
             pass
-            # print("训练集的当前epoch:%d - step:%d" % (epoch, step))
-            # print("训练准确度: %.6f, 召回率: %.6f, f1得分: %.6f- 损失函数: %.6f" % (precision, recall, f1_score, loss))
+            print("训练集的当前epoch:%d - step:%d" % (epoch, step))
+            #print("训练准确度: %.6f, 召回率: %.6f, f1得分: %.6f- 损失函数: %.6f" % (precision, recall, f1_score, loss))
+            print("训练准确度: %.6f, 召回率: %.6f, f1得分: %.6f" % (precision, recall,  acc))
 
         """
         这一段是backforward 向后传播，优化w
@@ -340,8 +358,17 @@ for epoch in range(5):
         # 梯度置零
         optimizer.clear_grad()
         global_step += 1
+    # 计算一个epoch的accuray、recall、precision
+    total_acc = model_acc.compute()
+    total_recall = model_recall.compute()
+    total_precision = model_precision.compute()
+    # 清空计算对象
+    model_precision.reset()
+    model_acc.reset()
+    model_recall.reset()
+
     # 评估训练模型
-    evaluate(model, metric, devloader)
+    evaluate(model, devloader)
     torch.save(model.state_dict(),
                './checkpoint/model_%d.pdparams' % (global_step))
 
