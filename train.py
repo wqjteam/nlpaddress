@@ -2,8 +2,7 @@ import numpy as np
 import random
 import torch
 import matplotlib.pylab as plt
-from sklearn.metrics import classification_report
-import torch.nn.functional as F
+import ignite
 import torch.nn as nn
 from transformers import BertTokenizer, BertConfig, BertForMaskedLM, BertForNextSentencePrediction, \
     BertForQuestionAnswering
@@ -201,6 +200,8 @@ MODEL_PATH = './dataset/model/bert-base-chinese/'
 # functools.partial()的功能：预先设置参数，减少使用时设置的参数个数
 # 使用partial()来固定convert_example函数的tokenizer, label_vocab, max_seq_length等参数值
 trans_func = partial(convert_example, tokenizer=tokenizer, label_vocab=label_vocab, max_seq_length=128)
+trans_func_test = partial(convert_example, tokenizer=tokenizer, label_vocab=label_vocab, max_seq_length=128,
+                          is_test=False)
 
 # 修改配置
 model_config.output_hidden_states = True
@@ -224,9 +225,9 @@ for index, dev in enumerate(dev_ds):
 
 
 def create_mini_batch(samples):
-    tokens_tensors = [torch.tensor(s[0]) for s in train_ds]
-    label_tensors = [torch.tensor(s[3]) for s in train_ds]
-
+    tokens_tensors = [torch.tensor(s[0]) for s in samples]
+    label_tensors = [torch.tensor(s[3]) for s in samples]
+    sql_lens = [s[2] for s in samples]
     # pad_sequence传入的数据必须的tensor
     # zero pad 到同一序列长度
     one = [0]
@@ -239,16 +240,16 @@ def create_mini_batch(samples):
         label_tensors = torch.tensor([t + one for t in label_tensors.numpy().tolist()])
     # attention masks，将 tokens_tensors 不为 zero padding 的位置设为1
     masks_tensors = torch.zeros(tokens_tensors.shape, dtype=torch.long)
-    masks_tensors = masks_tensors.masked_fill(tokens_tensors != 0, 1)
+    masks_tensors = masks_tensors.masked_fill(tokens_tensors != 0, 1)  # segment_ids
 
-    return tokens_tensors, masks_tensors, label_tensors
+    return tokens_tensors, masks_tensors, sql_lens, label_tensors
 
 
 # create_mini_batch(train_ds)
-trainloader = DataLoader(train_ds, batch_size=64, collate_fn=create_mini_batch, drop_last=False)
-devloader = DataLoader(dev_ds, batch_size=64, collate_fn=create_mini_batch, drop_last=False)
+trainloader = DataLoader(train_ds, batch_size=2, collate_fn=create_mini_batch, drop_last=False)
+devloader = DataLoader(dev_ds, batch_size=2, collate_fn=create_mini_batch, drop_last=False)
 
-#6.Bert模型加载和训练
+# 6.Bert模型加载和训练
 
 
 from transformers import BertForTokenClassification
@@ -266,6 +267,17 @@ criterion = nn.CrossEntropyLoss(ignore_index=-1)
 optimizer = torch.optim.Adam(lr=2e-5, params=model.parameters())
 
 
+def performance_index(predict, target):
+    confusion_matrix = torch.zeros(len(label_vocab.keys()), len(label_vocab.keys()))
+    for p, t in zip(predict.view(-1), target.view(-1)):
+        confusion_matrix[t.long(), p.long()] += 1
+    a_p = (confusion_matrix.diag() / confusion_matrix.sum(1))[0]
+    b_p = (confusion_matrix.diag() / confusion_matrix.sum(1))[1]
+    a_r = (confusion_matrix.diag() / confusion_matrix.sum(0))[0]
+    b_r = (confusion_matrix.diag() / confusion_matrix.sum(0))[1]
+    return a_p, b_p, a_r, b_r
+
+
 # 评估函数
 def evaluate(model, metric, data_loader):
     model.eval()
@@ -278,7 +290,7 @@ def evaluate(model, metric, data_loader):
         loss = torch.mean(criterion(logits, labels))
         # 按照概率最大原则，计算单字的标签编号
         # argmax计算logits中最大元素值的索引，从0开始
-        preds = torch.argmax(logits, axis=-1)
+        preds = torch.argmax(logits[0], axis=-1)
         # 推理块个数，标签个数，正确的标签个数
         n_infer, n_label, n_correct = metric.compute(None, lens, preds, labels)
         # 更新评估的参数
@@ -297,23 +309,32 @@ for epoch in range(5):
     for step, (input_ids, segment_ids, seq_lens, labels) in enumerate(trainloader, start=1):
         # 单字属于不同标签的概率
         logits = model(input_ids, segment_ids)
+
+        """
+        这一段是输出每一轮循环的准确率
+        """
         # 按照概率最大原则，计算单字的标签编号
-        preds = torch.argmax(logits, axis=-1)
+        preds = torch.argmax(logits[0], dim=-1)
         # 推理块个数，标签个数，正确的标签个数
-        n_infer, n_label, n_correct = metric.compute(None, seq_lens, preds, labels)
+        # n_infer, n_label, n_correct = classification_report(seq_lens, preds, labels)
         # 更新评估的参数
-        metric.update(n_infer.numpy(), n_label.numpy(), n_correct.numpy())
+        # metric.update(n_infer.numpy(), n_label.numpy(), n_correct.numpy())
         # 平均化的准确率、召回率、F1值
-        precision, recall, f1_score = metric.accumulate()
+        # precision, recall, f1_score = metric.accumulate()
+        performance_index(preds, labels)
+        ignite.Accuracy
+        if global_step % 10 == 0:
+            pass
+            # print("训练集的当前epoch:%d - step:%d" % (epoch, step))
+            # print("训练准确度: %.6f, 召回率: %.6f, f1得分: %.6f- 损失函数: %.6f" % (precision, recall, f1_score, loss))
+
+        """
+        这一段是backforward 向后传播，优化w
+        """
         # 损失函数的平均值
         loss = torch.mean(criterion(logits, labels))
         # 回传损失函数，计算梯度
         loss.backward()
-
-        if global_step % 10 == 0:
-            print("训练集的当前epoch:%d - step:%d" % (epoch, step))
-            print("训练准确度: %.6f, 召回率: %.6f, f1得分: %.6f- 损失函数: %.6f" % (precision, recall, f1_score, loss))
-
         # 根据梯度来更新参数
         optimizer.step()
         # 梯度置零
@@ -324,13 +345,12 @@ for epoch in range(5):
     torch.save(model.state_dict(),
                './checkpoint/model_%d.pdparams' % (global_step))
 
-
-#模型存储
+# 模型存储
 # !mkdir bert_result
 model.save_pretrained('./bert_result')
 tokenizer.save_pretrained('./bert_result')
 
-
+'''
 #7.模型加载与处理数据
 # 加载测试数据
 def load_testdata(datafiles):
@@ -508,3 +528,4 @@ model.set_dict(model_dict)
 
 #推理并预测结果
 wgm_predict_save(model, test_loader, test_ds, label_vocab, "predict_wgm.txt", "element_wgm.txt")
+'''
