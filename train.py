@@ -2,7 +2,6 @@ import numpy as np
 import random
 import torch
 import matplotlib.pylab as plt
-from ignite.metrics import Accuracy, Recall,Precision
 import torchmetrics
 import torch.nn as nn
 from transformers import BertTokenizer, BertConfig, BertForMaskedLM, BertForNextSentencePrediction,  BertForQuestionAnswering
@@ -11,9 +10,11 @@ from torch.utils.data import DataLoader, Dataset
 from torch.nn.utils.rnn import pad_sequence
 from functools import partial  # partial()函数可以用来固定某些参数值，并返回一个新的callable对象
 import pdb
+from transformers import BertForTokenClassification
 
-# pip install pytorch-ignite
+"""
 # 1.数据格式调整，将原先每行是每个字的标注形式，修改为每行是每句话的标注形式，相邻字（标注）之间，采用符号'\002'进行分隔
+"""
 def format_data(source_filename, target_filename):
     datalist = []
     # 读取source_filename所有数据到lines中，每个元素是字标注
@@ -55,7 +56,9 @@ def format_data(source_filename, target_filename):
     print(f'{source_filename}文件格式转换完毕，保存为{target_filename}')
 
 
+"""
 # 2.构建Label标签表
+"""
 # 提取文件source_filename1和source_filename2的标签类型，保存到target_filename
 def gernate_dic(source_filename1, source_filename2, target_filename):
     # 标签类型列表初始化为空
@@ -98,7 +101,9 @@ def MapDataset(listofdata):
     return [listofdata[0], listofdata[1]]
 
 
+"""
 # 3.加载自定义数据集
+"""
 # 加载数据文件datafiles
 def load_dataset(datafiles):
     # 读取数据文件data_path
@@ -148,7 +153,9 @@ def load_dict_single(dict_path):
 # 根据训练集和验证集生成dic，保存所有的标签
 # gernate_dic('dataset/train.conll', 'dataset/dev.conll', 'dataset/mytag.dic')
 
+"""
 # 4.加载Bert模型需要的输入数据
+"""
 train_ds, dev_ds = load_dataset(datafiles=(
     './dataset/train.txt', './dataset/dev.txt'))
 # 加载标签文件，并转换为KV表，K为标签，V为编号（从0开始递增）
@@ -162,7 +169,9 @@ label_vocab = load_dict_single('./dataset/mytag.dic')
 # print(label_vocab)
 
 
+"""
 # 5.数据预处理
+"""
 # tokenizer：预编码器，label_vocab：标签类型KV表，K是标签类型，V是编码
 def convert_example(example, tokenizer, label_vocab, max_seq_length=256, is_test=False):
     # 测试集没有标签
@@ -246,135 +255,120 @@ def create_mini_batch(samples):
 
 
 # create_mini_batch(train_ds)
-trainloader = DataLoader(train_ds, batch_size=1, collate_fn=create_mini_batch, drop_last=False)
-devloader = DataLoader(dev_ds, batch_size=1, collate_fn=create_mini_batch, drop_last=False)
+trainloader = DataLoader(train_ds, batch_size=64, collate_fn=create_mini_batch, drop_last=False)
+devloader = DataLoader(dev_ds, batch_size=64, collate_fn=create_mini_batch, drop_last=False)
 
+
+"""
 # 6.Bert模型加载和训练
-
-
-from transformers import BertForTokenClassification
-
-model = BertForTokenClassification.from_pretrained("bert-base-chinese", num_labels=len(label_vocab))
-
+"""
+# model = BertForTokenClassification.from_pretrained("bert-base-chinese", num_labels=len(label_vocab))
+model = BertForTokenClassification.from_pretrained(MODEL_PATH,num_labels=len(label_vocab))
 # model.cuda()
 # 设置Fine-Tune优化策略
 # 计算了块检测的精确率、召回率和F1-score。常用于序列标记任务，如命名实体识别
 # metric = ChunkEvaluator(label_list=label_vocab.keys(), suffix=True)
 # metric = torch.chunk(torch.tensor(np.zeros(4)), chunks=2)
 # 实例化相关metrics的计算对象
-model_acc = Accuracy(is_multilabel=True)
-model_recall = Recall(is_multilabel=True)
-model_precision = Precision(is_multilabel=True)
-test_acc = torchmetrics.Accuracy()
-test_recall = torchmetrics.Recall(average='macro', num_classes=len(label_vocab.keys()))
-test_precision = torchmetrics.Precision(average='macro',num_classes=10)
-test_auc = torchmetrics.AUROC(average="macro", num_classes=10)
+model_acc = torchmetrics.Accuracy()
+model_recall = torchmetrics.Recall(average='macro', num_classes=len(label_vocab.keys()))
+model_precision = torchmetrics.Precision(average='macro', num_classes=len(label_vocab.keys()))
+model_f1 = torchmetrics.F1Score(average="macro", num_classes=len(label_vocab.keys()))
 # 交叉熵损失函数
 criterion = nn.CrossEntropyLoss(ignore_index=-1)
 # 在Adam的基础上加入了权重衰减的优化器，可以解决L2正则化失效问题
 optimizer = torch.optim.Adam(lr=2e-5, params=model.parameters())
-metric = Accuracy()
+# metric = Accuracy()
 # metric.attach(default_evaluator, "accuracy")
 
 
-#支队二分类问题有用
-def performance_index(predict, target):
-    confusion_matrix = torch.zeros(len(label_vocab.keys()), len(label_vocab.keys()))
-    for p, t in zip(predict.view(-1), target.view(-1)):
-        confusion_matrix[t.long(), p.long()] += 1
-    a_p = (confusion_matrix.diag() / confusion_matrix.sum(1))[0]
-    b_p = (confusion_matrix.diag() / confusion_matrix.sum(1))[1]
-    a_r = (confusion_matrix.diag() / confusion_matrix.sum(0))[0]
-    b_r = (confusion_matrix.diag() / confusion_matrix.sum(0))[1]
-    return a_p, b_p, a_r, b_r
+#只对二分类问题有用
+# def performance_index(predict, target):
+#     confusion_matrix = torch.zeros(len(label_vocab.keys()), len(label_vocab.keys()))
+#     for p, t in zip(predict.view(-1), target.view(-1)):
+#         confusion_matrix[t.long(), p.long()] += 1
+#     a_p = (confusion_matrix.diag() / confusion_matrix.sum(1))[0]
+#     b_p = (confusion_matrix.diag() / confusion_matrix.sum(1))[1]
+#     a_r = (confusion_matrix.diag() / confusion_matrix.sum(0))[0]
+#     b_r = (confusion_matrix.diag() / confusion_matrix.sum(0))[1]
+#     return a_p, b_p, a_r, b_r
 
 
 # 评估函数
 def evaluate(model, metric, data_loader):
-    model.eval()
-    metric.reset()  # 评估器置位
     # 依次处理每批数据
     for input_ids, seg_ids, lens, labels in data_loader:
         # 单字属于不同标签的概率
-        logits = model(input_ids, seg_ids)
+        output= model(input_ids=input_ids,attention_mask = masks_tensors,labels =labels)
         # 损失函数的平均值
-        loss = torch.mean(criterion(logits, labels))
+        loss = output[0]
         # 按照概率最大原则，计算单字的标签编号
         # argmax计算logits中最大元素值的索引，从0开始
-        preds = torch.argmax(logits[0], axis=-1)
-        # 推理块个数，标签个数，正确的标签个数
-       # n_infer, n_label, n_correct = metric.compute(None, lens, preds, labels)
-        # 更新评估的参数
-        #metric.update(n_infer.numpy(), n_label.numpy(), n_correct.numpy())
-        # 平均化的准确率、召回率、F1值
-        #precision, recall, f1_score = metric.accumulate()
+        preds = torch.argmax(output[1], axis=-1)
 
-        model_acc.update((preds.flatten(), labels.flatten()))
-        model_recall.update((preds.flatten(), labels.flatten()))
-        model_precision.update((preds.flatten(), labels.flatten()))
-        # acc = model_acc.compute()
-        # recall = model_recall.compute()
-        # precision = model_precision.compute()
+        model_acc.update(preds.flatten(), labels.flatten())
+        model_recall.update(preds.flatten(), labels.flatten())
+        model_precision.update(preds.flatten(), labels.flatten())
+    acc = model_acc.update(preds.flatten(), labels.flatten())
+    recall = model_recall.update(preds.flatten(), labels.flatten())
+    precision = model_precision.update(preds.flatten(), labels.flatten())
+    # 清空计算对象
+    model_precision.reset()
+    model_acc.reset()
+    model_recall.reset()
+    print("评估准确度: %.6f - 召回率: %.6f - f1得分: %.6f- 损失函数: %.6f" % (precision, recall, acc, loss))
 
-        # test_auc.update(preds, labels)
-        # test_recall(preds, labels)
-        # test_precision(preds, labels)
-
-    # print("评估准确度: %.6f - 召回率: %.6f - f1得分: %.6f- 损失函数: %.6f" % (precision, recall, acc, loss))
-    model.train()
-    metric.reset()
 
 
 # 模型训练
 global_step = 0
 for epoch in range(5):
     # 依次处理每批数据
-    for step, (input_ids, segment_ids, seq_lens, labels) in enumerate(trainloader, start=1):
+    for step, (input_ids, masks_tensors, seq_lens, labels) in enumerate(trainloader, start=1):
         # 单字属于不同标签的概率
-        logits = model(input_ids, segment_ids)
+        output = model(input_ids=input_ids,attention_mask = masks_tensors,labels =labels)
 
         """
         这一段是输出每一轮循环的准确率
         """
         # 按照概率最大原则，计算单字的标签编号
-        preds = torch.argmax(logits[0], dim=-1)
+        preds = torch.argmax(output[1], dim=-1)
         # 推理块个数，标签个数，正确的标签个数
         # n_infer, n_label, n_correct = classification_report(seq_lens, preds, labels)
         # 更新评估的参数
         # metric.update(n_infer.numpy(), n_label.numpy(), n_correct.numpy())
         # 平均化的准确率、召回率、F1值
         # precision, recall, f1_score = metric.accumulate()
-        performance_index(preds, labels)
+        # performance_index(preds, labels)
         # 实例化相关metrics的计算对象
         # 一个batch进行计算迭代
-        # model_acc.update((preds, labels))
-        # model_recall.update((preds, labels))
-        # model_precision.update((preds, labels))
-        # acc = model_acc.compute()
-        # recall = model_recall.compute()
-        # precision = model_precision.compute()
 
 
-        # test_auc.update(preds, labels)
-        test_recall(preds.flatten(), labels.flatten())
-        test_precision(preds.flatten(), labels.flatten())
-        # if global_step % 10 == 0:
-        #     pass
-        #     print("训练集的当前epoch:%d - step:%d" % (epoch, step))
-        #     #print("训练准确度: %.6f, 召回率: %.6f, f1得分: %.6f- 损失函数: %.6f" % (precision, recall, f1_score, loss))
-        #     # print("训练准确度: %.6f, 召回率: %.6f, f1得分: %.6f" % (precision, recall,  acc))
+
+        # model_acc.update(preds, labels)
+        recall=model_recall(preds.flatten(), labels.flatten())
+        precision=model_precision(preds.flatten(), labels.flatten())
+        f1_score = model_f1(preds.flatten(), labels.flatten())
+        model_recall.update(preds.flatten(), labels.flatten())
+        model_precision.update(preds.flatten(), labels.flatten())
+        model_f1.update(preds.flatten(), labels.flatten())
+        loss = output[0]
+        # 损失函数的平均值
+        if global_step % 10 == 0:
+            pass
+            print("训练集的当前epoch:%d - step:%d" % (epoch, step))
+            print("训练准确度: %.6f, 召回率: %.6f, f1得分: %.6f- 损失函数: %.6f" % (precision, recall, f1_score, loss))
+            # print("训练准确度: %.6f, 召回率: %.6f, f1得分: %.6f" % (precision, recall,  f1_score))
 
         """
         这一段是backforward 向后传播，优化w
         """
-        # 损失函数的平均值
-        loss = torch.mean(criterion(logits, labels))
         # 回传损失函数，计算梯度
         loss.backward()
         # 根据梯度来更新参数
         optimizer.step()
         # 梯度置零
-        optimizer.clear_grad()
+        optimizer.zero_grad()
         global_step += 1
     # 计算一个epoch的accuray、recall、precision
     total_acc = model_acc.compute()
@@ -395,8 +389,9 @@ for epoch in range(5):
 model.save_pretrained('./bert_result')
 tokenizer.save_pretrained('./bert_result')
 
-'''
+"""
 #7.模型加载与处理数据
+"""
 # 加载测试数据
 def load_testdata(datafiles):
     def read(data_path):
@@ -573,4 +568,4 @@ model.set_dict(model_dict)
 
 #推理并预测结果
 wgm_predict_save(model, test_loader, test_ds, label_vocab, "predict_wgm.txt", "element_wgm.txt")
-'''
+
