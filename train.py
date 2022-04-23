@@ -345,7 +345,6 @@ for epoch in range(5):
         # 一个batch进行计算迭代
 
 
-
         # model_acc.update(preds, labels)
         recall=model_recall(preds.flatten(), labels.flatten())
         precision=model_precision(preds.flatten(), labels.flatten())
