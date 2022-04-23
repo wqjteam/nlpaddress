@@ -312,11 +312,12 @@ def evaluate(model, metric, data_loader):
     acc = model_acc.update(preds.flatten(), labels.flatten())
     recall = model_recall.update(preds.flatten(), labels.flatten())
     precision = model_precision.update(preds.flatten(), labels.flatten())
+
     # 清空计算对象
     model_precision.reset()
     model_acc.reset()
     model_recall.reset()
-    print("评估准确度: %.6f - 召回率: %.6f - f1得分: %.6f- 损失函数: %.6f" % (precision, recall, acc, loss))
+    print("评估准确度: %.6f - 召回率: %.6f - f1得分: %.6f- 损失函数: %.6f" % (precision, recall, acc, total_loss))
 
 
 
@@ -327,7 +328,7 @@ for epoch in range(5):
     for step, (input_ids, masks_tensors, seq_lens, labels) in enumerate(trainloader, start=1):
         # 单字属于不同标签的概率
         output = model(input_ids=input_ids,attention_mask = masks_tensors,labels =labels)
-
+        total_loss = 0.0
         """
         这一段是输出每一轮循环的准确率
         """
@@ -353,6 +354,7 @@ for epoch in range(5):
         model_precision.update(preds.flatten(), labels.flatten())
         model_f1.update(preds.flatten(), labels.flatten())
         loss = output[0]
+        total_loss+=loss.item()
         # 损失函数的平均值
         if global_step % 10 == 0:
             pass
@@ -374,6 +376,7 @@ for epoch in range(5):
     total_acc = model_acc.compute()
     total_recall = model_recall.compute()
     total_precision = model_precision.compute()
+
     # 清空计算对象
     model_precision.reset()
     model_acc.reset()
