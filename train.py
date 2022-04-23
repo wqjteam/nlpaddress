@@ -3,6 +3,7 @@ import random
 import torch
 import matplotlib.pylab as plt
 from ignite.metrics import Accuracy, Recall,Precision
+import torchmetrics
 import torch.nn as nn
 from transformers import BertTokenizer, BertConfig, BertForMaskedLM, BertForNextSentencePrediction,  BertForQuestionAnswering
 from transformers import BertModel
@@ -245,8 +246,8 @@ def create_mini_batch(samples):
 
 
 # create_mini_batch(train_ds)
-trainloader = DataLoader(train_ds, batch_size=2, collate_fn=create_mini_batch, drop_last=False)
-devloader = DataLoader(dev_ds, batch_size=2, collate_fn=create_mini_batch, drop_last=False)
+trainloader = DataLoader(train_ds, batch_size=1, collate_fn=create_mini_batch, drop_last=False)
+devloader = DataLoader(dev_ds, batch_size=1, collate_fn=create_mini_batch, drop_last=False)
 
 # 6.Bert模型加载和训练
 
@@ -261,15 +262,22 @@ model = BertForTokenClassification.from_pretrained("bert-base-chinese", num_labe
 # metric = ChunkEvaluator(label_list=label_vocab.keys(), suffix=True)
 # metric = torch.chunk(torch.tensor(np.zeros(4)), chunks=2)
 # 实例化相关metrics的计算对象
-model_acc = Accuracy()
-model_recall = Recall()
-model_precision = Precision()
+model_acc = Accuracy(is_multilabel=True)
+model_recall = Recall(is_multilabel=True)
+model_precision = Precision(is_multilabel=True)
+test_acc = torchmetrics.Accuracy()
+test_recall = torchmetrics.Recall(average='macro', num_classes=len(label_vocab.keys()))
+test_precision = torchmetrics.Precision(average='macro',num_classes=10)
+test_auc = torchmetrics.AUROC(average="macro", num_classes=10)
 # 交叉熵损失函数
 criterion = nn.CrossEntropyLoss(ignore_index=-1)
 # 在Adam的基础上加入了权重衰减的优化器，可以解决L2正则化失效问题
 optimizer = torch.optim.Adam(lr=2e-5, params=model.parameters())
+metric = Accuracy()
+# metric.attach(default_evaluator, "accuracy")
 
 
+#支队二分类问题有用
 def performance_index(predict, target):
     confusion_matrix = torch.zeros(len(label_vocab.keys()), len(label_vocab.keys()))
     for p, t in zip(predict.view(-1), target.view(-1)):
@@ -300,14 +308,19 @@ def evaluate(model, metric, data_loader):
         #metric.update(n_infer.numpy(), n_label.numpy(), n_correct.numpy())
         # 平均化的准确率、召回率、F1值
         #precision, recall, f1_score = metric.accumulate()
-        model_acc.update(preds, labels)
-        model_recall.update(preds, labels)
-        model_precision.update(preds, labels)
-        acc = model_acc.compute()
-        recall = model_recall.compute()
-        precision = model_precision.compute()
 
-    print("评估准确度: %.6f - 召回率: %.6f - f1得分: %.6f- 损失函数: %.6f" % (precision, recall, acc, loss))
+        model_acc.update((preds.flatten(), labels.flatten()))
+        model_recall.update((preds.flatten(), labels.flatten()))
+        model_precision.update((preds.flatten(), labels.flatten()))
+        # acc = model_acc.compute()
+        # recall = model_recall.compute()
+        # precision = model_precision.compute()
+
+        # test_auc.update(preds, labels)
+        # test_recall(preds, labels)
+        # test_precision(preds, labels)
+
+    # print("评估准确度: %.6f - 召回率: %.6f - f1得分: %.6f- 损失函数: %.6f" % (precision, recall, acc, loss))
     model.train()
     metric.reset()
 
@@ -334,17 +347,22 @@ for epoch in range(5):
         performance_index(preds, labels)
         # 实例化相关metrics的计算对象
         # 一个batch进行计算迭代
-        model_acc.update(preds, labels)
-        model_recall.update(preds, labels)
-        model_precision.update(preds, labels)
-        acc = model_acc.compute()
-        recall = model_recall.compute()
-        precision = model_precision.compute()
-        if global_step % 10 == 0:
-            pass
-            print("训练集的当前epoch:%d - step:%d" % (epoch, step))
-            #print("训练准确度: %.6f, 召回率: %.6f, f1得分: %.6f- 损失函数: %.6f" % (precision, recall, f1_score, loss))
-            print("训练准确度: %.6f, 召回率: %.6f, f1得分: %.6f" % (precision, recall,  acc))
+        # model_acc.update((preds, labels))
+        # model_recall.update((preds, labels))
+        # model_precision.update((preds, labels))
+        # acc = model_acc.compute()
+        # recall = model_recall.compute()
+        # precision = model_precision.compute()
+
+
+        # test_auc.update(preds, labels)
+        test_recall(preds.flatten(), labels.flatten())
+        test_precision(preds.flatten(), labels.flatten())
+        # if global_step % 10 == 0:
+        #     pass
+        #     print("训练集的当前epoch:%d - step:%d" % (epoch, step))
+        #     #print("训练准确度: %.6f, 召回率: %.6f, f1得分: %.6f- 损失函数: %.6f" % (precision, recall, f1_score, loss))
+        #     # print("训练准确度: %.6f, 召回率: %.6f, f1得分: %.6f" % (precision, recall,  acc))
 
         """
         这一段是backforward 向后传播，优化w
