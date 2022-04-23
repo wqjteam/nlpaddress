@@ -243,10 +243,10 @@ def create_mini_batch(samples):
     tokens_tensors = pad_sequence(tokens_tensors, batch_first=True)
     label_tensors = pad_sequence(label_tensors, batch_first=True, padding_value=0)
 
-    if len(tokens_tensors[0]) != 50:
-        tokens_tensors = torch.tensor([t + one for t in tokens_tensors.numpy().tolist()])
-    if len(label_tensors[0]) != 50:
-        label_tensors = torch.tensor([t + one for t in label_tensors.numpy().tolist()])
+
+    tokens_tensors = torch.tensor([t + one for t in tokens_tensors.numpy().tolist()])
+    label_tensors = torch.tensor([t + one for t in label_tensors.numpy().tolist()])
+
     # attention masks，将 tokens_tensors 不为 zero padding 的位置设为1
     masks_tensors = torch.zeros(tokens_tensors.shape, dtype=torch.long)
     masks_tensors = masks_tensors.masked_fill(tokens_tensors != 0, 1)  # segment_ids
