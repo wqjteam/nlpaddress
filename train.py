@@ -270,7 +270,7 @@ model = BertForTokenClassification.from_pretrained(MODEL_PATH,num_labels=len(lab
 # metric = ChunkEvaluator(label_list=label_vocab.keys(), suffix=True)
 # metric = torch.chunk(torch.tensor(np.zeros(4)), chunks=2)
 # 实例化相关metrics的计算对象
-model_acc = torchmetrics.Accuracy()
+# model_acc = torchmetrics.Accuracy(average='macro', num_classes=len(label_vocab.keys()))
 model_recall = torchmetrics.Recall(average='macro', num_classes=len(label_vocab.keys()))
 model_precision = torchmetrics.Precision(average='macro', num_classes=len(label_vocab.keys()))
 model_f1 = torchmetrics.F1Score(average="macro", num_classes=len(label_vocab.keys()))
@@ -306,18 +306,18 @@ def evaluate(model, metric, data_loader):
         # argmax计算logits中最大元素值的索引，从0开始
         preds = torch.argmax(output[1], axis=-1)
 
-        model_acc.update(preds.flatten(), labels.flatten())
+        model_f1.update(preds.flatten(), labels.flatten())
         model_recall.update(preds.flatten(), labels.flatten())
         model_precision.update(preds.flatten(), labels.flatten())
-    acc = model_acc.update(preds.flatten(), labels.flatten())
-    recall = model_recall.update(preds.flatten(), labels.flatten())
-    precision = model_precision.update(preds.flatten(), labels.flatten())
+    f1_score = model_f1.compute()
+    recall = model_recall.compute()
+    precision = model_precision.compute()
 
     # 清空计算对象
     model_precision.reset()
-    model_acc.reset()
+    model_f1.reset()
     model_recall.reset()
-    print("评估准确度: %.6f - 召回率: %.6f - f1得分: %.6f- 损失函数: %.6f" % (precision, recall, acc, total_loss))
+    print("评估准确度: %.6f - 召回率: %.6f - f1得分: %.6f- 损失函数: %.6f" % (precision, recall, f1_score, total_loss))
 
 
 
@@ -349,9 +349,10 @@ for epoch in range(5):
         recall=model_recall(preds.flatten(), labels.flatten())
         precision=model_precision(preds.flatten(), labels.flatten())
         f1_score = model_f1(preds.flatten(), labels.flatten())
-        model_recall.update(preds.flatten(), labels.flatten())
-        model_precision.update(preds.flatten(), labels.flatten())
-        model_f1.update(preds.flatten(), labels.flatten())
+        # model_recall.update(preds.flatten(), labels.flatten())
+        # model_precision.update(preds.flatten(), labels.flatten())
+        # model_f1.update(preds.flatten(), labels.flatten())
+        # total_recall = model_recall.compute()
         loss = output[0]
         total_loss+=loss.item()
         # 损失函数的平均值
@@ -372,13 +373,13 @@ for epoch in range(5):
         optimizer.zero_grad()
         global_step += 1
     # 计算一个epoch的accuray、recall、precision
-    total_acc = model_acc.compute()
     total_recall = model_recall.compute()
     total_precision = model_precision.compute()
+    total_f1 = model_precision.compute()
 
     # 清空计算对象
     model_precision.reset()
-    model_acc.reset()
+    model_f1.reset()
     model_recall.reset()
 
     # 评估训练模型
