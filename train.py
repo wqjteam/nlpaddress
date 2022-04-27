@@ -295,9 +295,9 @@ optimizer = torch.optim.Adam(lr=2e-5, params=model.parameters())
 
 
 # 评估函数
-def evaluate(model, metric, data_loader):
+def evaluate(model, data_loader):
     # 依次处理每批数据
-    for input_ids, seg_ids, lens, labels in data_loader:
+    for input_ids, masks_tensors, lens, labels in data_loader:
         # 单字属于不同标签的概率
         output= model(input_ids=input_ids,attention_mask = masks_tensors,labels =labels)
         # 损失函数的平均值
