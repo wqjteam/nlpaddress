@@ -385,7 +385,7 @@ for epoch in range(5):
     # 评估训练模型
     evaluate(model, devloader)
     torch.save(model.state_dict(),
-               './checkpoint/model_%d.pdparams' % (global_step))
+               "./checkpoint/model_%d.pdparams"% (global_step))
 
 # 模型存储
 # !mkdir bert_result
