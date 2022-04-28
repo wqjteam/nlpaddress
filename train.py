@@ -552,7 +552,7 @@ def wgm_predict_save(model, data_loader, ds, label_vocab, tagged_filename, eleme
 
 #加载Bert模型
 model = BertForTokenClassification.from_pretrained("./bert_result/", num_labels=len(label_vocab))
-model_dict = torch.load('bert_result/model_state.pdparams')
+model_dict = torch.load('./bert_result/model_state.pdparams')
 model.set_dict(model_dict)
 
 #推理并预测结果
