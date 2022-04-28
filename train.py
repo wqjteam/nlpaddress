@@ -210,7 +210,7 @@ MODEL_PATH = './dataset/model/bert-base-chinese/'
 # 使用partial()来固定convert_example函数的tokenizer, label_vocab, max_seq_length等参数值
 trans_func = partial(convert_example, tokenizer=tokenizer, label_vocab=label_vocab, max_seq_length=128)
 trans_func_test = partial(convert_example, tokenizer=tokenizer, label_vocab=label_vocab, max_seq_length=128,
-                          is_test=False)
+                          is_test=True)
 
 # 修改配置
 model_config.output_hidden_states = True
@@ -224,8 +224,8 @@ for index, train in enumerate(train_ds):
     train_ds[index] = trans_func(train)
 for index, dev in enumerate(dev_ds):
     dev_ds[index] = trans_func(dev)
-
-
+train_ds=train_ds[0:64]
+dev_ds=dev_ds[0:64]
 # 输出转换后的向量
 # 向量转单词
 
@@ -323,7 +323,7 @@ def evaluate(model, data_loader):
 
 # 模型训练
 global_step = 0
-for epoch in range(5):
+for epoch in range(1):
     # 依次处理每批数据
     for step, (input_ids, masks_tensors, seq_lens, labels) in enumerate(trainloader, start=1):
         # 单字属于不同标签的概率
@@ -397,25 +397,26 @@ tokenizer.save_pretrained('./bert_result')
 """
 # 加载测试数据
 def load_testdata(datafiles):
+
     def read(data_path):
         with open(data_path, 'r', encoding='utf-8') as fp:
             # next(fp)  # 没有header，不用Skip header
             for line in fp.readlines():
                 ids, words = line.strip('\n').split('\001')
                 # 要预测的数据集没有label，伪造个O，不知道可以不 ，应该后面预测不会用label
-                labels = ['O' for x in range(0, len(words))]
+                # labels = ['O' for x in range(0, len(words))]
                 words_array = []
                 for c in words:
                     words_array.append(c)
-                yield words_array, labels
+                yield words_array
 
     # 根据datafiles的数据类型，选择合适的处理方式
     if isinstance(datafiles, str):  # 字符串，单个文件名称
         # 返回单个文件对应的单个数据集
-        return MapDataset(list(read(datafiles)))
+        return list(read(datafiles))
     elif isinstance(datafiles, list) or isinstance(datafiles, tuple):  # 列表或元组，多个文件名称、
         # 返回多个文件对应的多个数据集
-        return [MapDataset(list(read(datafile))) for datafile in datafiles]
+        return [list(read(datafile)) for datafile in datafiles]
 
 
 
@@ -424,27 +425,12 @@ test_ds = load_testdata(datafiles=('./dataset/final_test.txt'))
 for i in range(10):
     print(test_ds[i])
 #预处理编码
-test_ds.map(trans_func)
+for index, test in enumerate(test_ds):
+    test_ds[index] = trans_func_test(test)
 print (test_ds[0])
 
 
-#使用paddle.io.DataLoader接口多线程异步加载数据。
-ignore_label = 1
-#创建Tuple对象，将多个批处理函数的处理结果连接在一起
-#因为数据集train_ds、dev_ds的每条数据包含4部分，所以Tuple对象中包含4个批处理函数，分别对应Token ID、Token Type、Len、Label
-batchify_fn = lambda samples, fn=torch.Tuple(
-    pad_sequence(axis=0, pad_val=tokenizer.pad_token_id),  # input_ids
-    pad_sequence(axis=0, pad_val=tokenizer.pad_token_type_id),  # token_type_ids
-    torch.stack(),  # seq_len
-    pad_sequence(axis=0, pad_val=ignore_label)  # labels
-): fn(samples)
-#paddle.io.DataLoader加载给定数据集，返回迭代器，每次迭代访问batch_size条数据
-#使用collate_fn定义所读取数据的格式
-test_loader = DataLoader(
-    dataset=test_ds,
-    batch_size=50,
-    return_list=True,
-    collate_fn=batchify_fn)
+testloader = DataLoader(test_ds, batch_size=64, collate_fn=create_mini_batch, drop_last=False)
 
 
 
@@ -565,10 +551,10 @@ def wgm_predict_save(model, data_loader, ds, label_vocab, tagged_filename, eleme
 
 
 #加载Bert模型
-model = BertForTokenClassification.from_pretrained("bert-base-chinese", num_classes=len(label_vocab))
+model = BertForTokenClassification.from_pretrained("./bert_result/", num_labels=len(label_vocab))
 model_dict = torch.load('bert_result/model_state.pdparams')
 model.set_dict(model_dict)
 
 #推理并预测结果
-wgm_predict_save(model, test_loader, test_ds, label_vocab, "predict_wgm.txt", "element_wgm.txt")
+wgm_predict_save(model, testloader, test_ds, label_vocab, "predict_wgm.txt", "element_wgm.txt")
 
