@@ -235,8 +235,8 @@ dev_ds=dev_ds[0:64]
 
 def create_mini_batch(samples):
     tokens_tensors = [torch.tensor(s[0]) for s in samples]
-    label_tensors = [torch.tensor(s[3]) for s in samples]
     sql_lens = [s[2] for s in samples]
+    label_tensors = [torch.tensor(s[3]) if len(s) <=3  else [0]*s[2] for s in samples]
     # pad_sequence传入的数据必须的tensor
     # zero pad 到同一序列长度
     one = [0]
@@ -255,8 +255,8 @@ def create_mini_batch(samples):
 
 
 # create_mini_batch(train_ds)
-trainloader = DataLoader(train_ds, batch_size=64, collate_fn=create_mini_batch, drop_last=False)
-devloader = DataLoader(dev_ds, batch_size=64, collate_fn=create_mini_batch, drop_last=False)
+# trainloader = DataLoader(train_ds, batch_size=64, collate_fn=create_mini_batch, drop_last=False)
+# devloader = DataLoader(dev_ds, batch_size=64, collate_fn=create_mini_batch, drop_last=False)
 
 
 """
@@ -323,7 +323,7 @@ def evaluate(model, data_loader):
 
 # 模型训练
 global_step = 0
-for epoch in range(1):
+for epoch in range(0):
     # 依次处理每批数据
     for step, (input_ids, masks_tensors, seq_lens, labels) in enumerate(trainloader, start=1):
         # 单字属于不同标签的概率
@@ -389,8 +389,8 @@ for epoch in range(1):
 
 # 模型存储
 # !mkdir bert_result
-model.save_pretrained('./bert_result')
-tokenizer.save_pretrained('./bert_result')
+# model.save_pretrained('./bert_result')
+# tokenizer.save_pretrained('./bert_result')
 
 """
 #7.模型加载与处理数据
@@ -422,12 +422,12 @@ def load_testdata(datafiles):
 
 #加载测试文件
 test_ds = load_testdata(datafiles=('./dataset/final_test.txt'))
-for i in range(10):
-    print(test_ds[i])
+# for i in range(10):
+#     print(test_ds[i])
 #预处理编码
 for index, test in enumerate(test_ds):
     test_ds[index] = trans_func_test(test)
-print (test_ds[0])
+# print (test_ds[0])
 
 
 testloader = DataLoader(test_ds, batch_size=64, collate_fn=create_mini_batch, drop_last=False)
@@ -551,9 +551,10 @@ def wgm_predict_save(model, data_loader, ds, label_vocab, tagged_filename, eleme
 
 
 #加载Bert模型
-model = BertForTokenClassification.from_pretrained("./bert_result/", num_labels=len(label_vocab))
-model_dict = torch.load('./bert_result/model_state.pdparams')
-model.set_dict(model_dict)
+tokenizer = BertForTokenClassification.from_pretrained("./bert_result/", num_labels=len(label_vocab))
+model=BertTokenizer.from_pretrained("./bert_result/")
+# model_dict = torch.load('./bert_result/')
+# model.set_dict(model_dict)
 
 #推理并预测结果
 wgm_predict_save(model, testloader, test_ds, label_vocab, "predict_wgm.txt", "element_wgm.txt")
