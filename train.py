@@ -187,7 +187,7 @@ def convert_example(example, tokenizer, label_vocab, max_seq_length=256, is_test
     # 获取字符编码（'input_ids'）、类型编码（'token_type_ids'）、字符串长度（'seq_len'）
     input_ids = encoded_inputs["input_ids"]
     segment_ids = encoded_inputs["token_type_ids"]
-    seq_len = len(input_ids) - 2
+    seq_len = torch.tensor(len(input_ids))
 
     if not is_test:  # 训练集和验证集
         # [CLS]和[SEP]对应的标签均是['O']，添加到标签序列中
@@ -200,9 +200,9 @@ def convert_example(example, tokenizer, label_vocab, max_seq_length=256, is_test
 
 
 # a.通过词典导入分词器
-tokenizer = BertTokenizer.from_pretrained("bert-base-chinese")
+tokenizer = BertTokenizer.from_pretrained("./dataset/model/bert-base-chinese/")
 # b. 导入配置文件
-model_config = BertConfig.from_pretrained("bert-base-chinese")
+# model_config = BertConfig.from_pretrained("./dataset/model/bert-base-chinese/")
 # 对训练集和测试集进行编码
 MODEL_PATH = './dataset/model/bert-base-chinese/'
 
@@ -213,10 +213,10 @@ trans_func_test = partial(convert_example, tokenizer=tokenizer, label_vocab=labe
                           is_test=True)
 
 # 修改配置
-model_config.output_hidden_states = True
-model_config.output_attentions = True
+# model_config.output_hidden_states = True
+# model_config.output_attentions = True
 # 通过配置和路径导入模型
-bert_model = BertModel.from_pretrained(MODEL_PATH, config=model_config)
+# bert_model = BertModel.from_pretrained(MODEL_PATH, config=model_config)
 
 # 对训练集和测试集进行编码
 # print(train_ds[0])
@@ -224,8 +224,6 @@ for index, train in enumerate(train_ds):
     train_ds[index] = trans_func(train)
 for index, dev in enumerate(dev_ds):
     dev_ds[index] = trans_func(dev)
-train_ds=train_ds[0:64]
-dev_ds=dev_ds[0:64]
 # 输出转换后的向量
 # 向量转单词
 
@@ -236,12 +234,16 @@ dev_ds=dev_ds[0:64]
 def create_mini_batch(samples):
     tokens_tensors = [torch.tensor(s[0]) for s in samples]
     sql_lens = [s[2] for s in samples]
-    label_tensors = [torch.tensor(s[3]) if len(s) <=3  else [0]*s[2] for s in samples]
+    label_tensors=None
+    if len(samples[0])==4:
+        label_tensors = [s[3] for s in samples]
+    else:
+        label_tensors = [torch.tensor([0]*s[2].item()) for s in samples]
     # pad_sequence传入的数据必须的tensor
     # zero pad 到同一序列长度
     one = [0]
     tokens_tensors = pad_sequence(tokens_tensors, batch_first=True)
-    label_tensors = pad_sequence(label_tensors, batch_first=True, padding_value=0)
+    label_tensors = pad_sequence(label_tensors, batch_first=False, padding_value=0)
 
 
     tokens_tensors = torch.tensor([t + one for t in tokens_tensors.numpy().tolist()])
@@ -255,22 +257,18 @@ def create_mini_batch(samples):
 
 
 # create_mini_batch(train_ds)
-# trainloader = DataLoader(train_ds, batch_size=64, collate_fn=create_mini_batch, drop_last=False)
-# devloader = DataLoader(dev_ds, batch_size=64, collate_fn=create_mini_batch, drop_last=False)
+trainloader = DataLoader(train_ds, batch_size=32, collate_fn=create_mini_batch, drop_last=False)
+devloader = DataLoader(dev_ds, batch_size=32, collate_fn=create_mini_batch, drop_last=False)
 
 
 """
 # 6.Bert模型加载和训练
 """
-# model = BertForTokenClassification.from_pretrained("bert-base-chinese", num_labels=len(label_vocab))
 model = BertForTokenClassification.from_pretrained(MODEL_PATH,num_labels=len(label_vocab))
 # model.cuda()
 # 设置Fine-Tune优化策略
 # 计算了块检测的精确率、召回率和F1-score。常用于序列标记任务，如命名实体识别
-# metric = ChunkEvaluator(label_list=label_vocab.keys(), suffix=True)
-# metric = torch.chunk(torch.tensor(np.zeros(4)), chunks=2)
 # 实例化相关metrics的计算对象
-# model_acc = torchmetrics.Accuracy(average='macro', num_classes=len(label_vocab.keys()))
 model_recall = torchmetrics.Recall(average='macro', num_classes=len(label_vocab.keys()))
 model_precision = torchmetrics.Precision(average='macro', num_classes=len(label_vocab.keys()))
 model_f1 = torchmetrics.F1Score(average="macro", num_classes=len(label_vocab.keys()))
@@ -278,8 +276,7 @@ model_f1 = torchmetrics.F1Score(average="macro", num_classes=len(label_vocab.key
 criterion = nn.CrossEntropyLoss(ignore_index=-1)
 # 在Adam的基础上加入了权重衰减的优化器，可以解决L2正则化失效问题
 optimizer = torch.optim.Adam(lr=2e-5, params=model.parameters())
-# metric = Accuracy()
-# metric.attach(default_evaluator, "accuracy")
+
 
 
 #只对二分类问题有用
@@ -389,8 +386,8 @@ for epoch in range(0):
 
 # 模型存储
 # !mkdir bert_result
-# model.save_pretrained('./bert_result')
-# tokenizer.save_pretrained('./bert_result')
+model.save_pretrained('./bert_result')
+tokenizer.save_pretrained('./bert_result')
 
 """
 #7.模型加载与处理数据
@@ -427,15 +424,16 @@ test_ds = load_testdata(datafiles=('./dataset/final_test.txt'))
 #预处理编码
 for index, test in enumerate(test_ds):
     test_ds[index] = trans_func_test(test)
-# print (test_ds[0])
 
 
-testloader = DataLoader(test_ds, batch_size=64, collate_fn=create_mini_batch, drop_last=False)
+
+testloader = DataLoader(test_ds, batch_size=32, collate_fn=create_mini_batch, drop_last=False)
 
 
 
 #8、Bert模型推理
 # 将标签编码转换为标签名称，组合成预测结果
+#wgm_trans_decodes(ds, pred_list, len_list, label_vocab)
 # ds：Bert模型生成的编码序列列表，decodes：待转换的标签编码列表，lens：句子有效长度列表，label_vocab：标签类型KV表
 def wgm_trans_decodes(ds, decodes, lens, label_vocab):
     # 将decodes和lens由列表转换为数组
@@ -450,7 +448,8 @@ def wgm_trans_decodes(ds, decodes, lens, label_vocab):
     # 逐个处理待转换的标签编码列表
     for idx, end in enumerate(lens):
         # 句子单字构成的数组
-        sent_array = ds.data[idx][0][:end]
+        sent_array = tokenizer.convert_ids_to_tokens(ds[idx][0][:end])
+
         # 句子单字标签构成的数组
         tags_array = [id_label[x] for x in decodes[idx][1:end]]
         # 初始化句子和解析结果
@@ -460,7 +459,7 @@ def wgm_trans_decodes(ds, decodes, lens, label_vocab):
         for i in range(end - 2):
             # pdb.set_trace()
             # 单字直接连接，形成句子
-            sent = sent + sent_array[i]
+            sent = sent + "|"+sent_array[i]
             # 标签以空格连接
             if i > 0:
                 tags = tags + " " + tags_array[i]
@@ -477,6 +476,8 @@ def wgm_trans_decodes(ds, decodes, lens, label_vocab):
 
 # 从标签编码中提取出地址元素
 # ds：ERNIE模型生成的编码序列列表，decodes：待转换的标签编码列表，lens：句子有效长度列表，label_vocab：标签类型KV表
+# 从标签编码中提取出地址元素
+#elemlist = wgm_parse_decodes(ds, pred_list, len_list, label_vocab)
 def wgm_parse_decodes(ds, decodes, lens, label_vocab):
     # 将decodes和lens由列表转换为数组
     decodes = [x for batch in decodes for x in batch]
@@ -489,7 +490,7 @@ def wgm_parse_decodes(ds, decodes, lens, label_vocab):
     outputs = []
     for idx, end in enumerate(lens):
         # 句子单字构成的数组
-        sent = ds.data[idx][0][:end]
+        sent = tokenizer.convert_ids_to_tokens(ds[idx][0][:end])
         # 句子单字标签构成的数组
         tags = [id_label[x] for x in decodes[idx][1:end]]
         # 初始化地址元素名称和标签列表
@@ -532,11 +533,11 @@ def wgm_predict_save(model, data_loader, ds, label_vocab, tagged_filename, eleme
     len_list = []
     for input_ids, seg_ids, lens, labels in data_loader:
         # pdb.set_trace()
-        logits = model(input_ids, seg_ids)
-        pred = torch.argmax(logits, axis=-1)
+        logits = model(input_ids=input_ids, attention_mask=seg_ids)
+        pred = torch.argmax(logits[0], axis=-1)
         # print(pred)
         pred_list.append(pred.numpy())
-        len_list.append(lens.numpy())
+        len_list.append([len.item() for len in lens])
     # 将标签编码转换为标签名称，组合成预测结果
     predlist = wgm_trans_decodes(ds, pred_list, len_list, label_vocab)
     # 从标签编码中提取出地址元素
@@ -551,8 +552,13 @@ def wgm_predict_save(model, data_loader, ds, label_vocab, tagged_filename, eleme
 
 
 #加载Bert模型
-tokenizer = BertForTokenClassification.from_pretrained("./bert_result/", num_labels=len(label_vocab))
-model=BertTokenizer.from_pretrained("./bert_result/")
+# a.通过词典导入分词器
+# tokenizer = BertTokenizer.from_pretrained("./dataset/model/bert-base-chinese/")
+# b. 导入配置文件
+# model_config = BertConfig.from_pretrained("./dataset/model/bert-base-chinese/")
+model = BertForTokenClassification.from_pretrained("./bert_result/", num_labels=len(label_vocab))
+# bert_model = BertModel.from_pretrained(MODEL_PATH, config=model_config)
+# model=BertTokenizer.from_pretrained("./bert_result/")
 # model_dict = torch.load('./bert_result/')
 # model.set_dict(model_dict)
 
