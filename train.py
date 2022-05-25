@@ -444,7 +444,7 @@ def wgm_trans_decodes(ds, decodes, lens, label_vocab):
     # 保存所有句子解析结果的列表
     results = []
     # 初始化编号
-    inNum = 1;
+    inNum = 1
     # 逐个处理待转换的标签编码列表
     for idx, end in enumerate(lens):
         # 句子单字构成的数组
@@ -453,8 +453,8 @@ def wgm_trans_decodes(ds, decodes, lens, label_vocab):
         # 句子单字标签构成的数组
         tags_array = [id_label[x] for x in decodes[idx][1:end]]
         # 初始化句子和解析结果
-        sent = "";
-        tags = "";
+        sent = ""
+        tags = ""
         # 将字符串数组转换为单个字符串
         for i in range(end - 2):
             # pdb.set_trace()
