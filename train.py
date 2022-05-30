@@ -236,14 +236,14 @@ def create_mini_batch(samples):
     sql_lens = [s[2] for s in samples]
     label_tensors=None
     if len(samples[0])==4:
-        label_tensors = [s[3] for s in samples]
+        label_tensors = [torch.tensor(s[3]) for s in samples]
     else:
         label_tensors = [torch.tensor([0]*s[2].item()) for s in samples]
     # pad_sequence传入的数据必须的tensor
     # zero pad 到同一序列长度
     one = [0]
     tokens_tensors = pad_sequence(tokens_tensors, batch_first=True)
-    label_tensors = pad_sequence(label_tensors, batch_first=False, padding_value=0)
+    label_tensors = pad_sequence(label_tensors, batch_first=True)
 
 
     tokens_tensors = torch.tensor([t + one for t in tokens_tensors.numpy().tolist()])
@@ -320,9 +320,9 @@ def evaluate(model, data_loader):
 
 # 模型训练
 global_step = 0
-for epoch in range(0):
+for epoch in range(1000):
     # 依次处理每批数据
-    for step, (input_ids, masks_tensors, seq_lens, labels) in enumerate(trainloader, start=1):
+    for step, (input_ids, masks_tensors, seq_lens, labels) in enumerate(trainloader,start=1):
         # 单字属于不同标签的概率
         output = model(input_ids=input_ids,attention_mask = masks_tensors,labels =labels)
         total_loss = 0.0
